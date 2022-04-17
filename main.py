@@ -2,13 +2,15 @@ import pandas as pd
 from iso3166 import countries
 import scraping
 
+# A parameter of 0 will scrape the entire IMDB database for all shows, no matter how many votes they have
+minNumberVotes = 0
 
 def main():
     for country_info in countries:
         print(country_info[0])
         print(country_info[1])
 
-        data = scraping.IMDB_scrape(country_info[1], 1000)
+        data = scraping.IMDB_scrape(country_info[1], minNumberVotes)
 
         print("\n------------------------")
         df = pd.DataFrame(data).T

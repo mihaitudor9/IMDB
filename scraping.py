@@ -2,6 +2,7 @@ import numpy as np
 import re
 from bs4 import BeautifulSoup
 from requests import get
+from typing import Final
 
 movieTitle = []
 movieDate = []
