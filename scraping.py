@@ -1,141 +1,124 @@
+import pandas as pd
 import numpy as np
 import re
 from bs4 import BeautifulSoup
 from requests import get
-from typing import Final
+from typing import Tuple
+from iso3166 import countries
+import os
+from datetime import datetime
 
-movieTitle = []
-movieDate = []
-movieRunTime = []
-movieGenre = []
-movieRating = []
-movieScore = []
-movieDescription = []
-movieDirector = []
-movieStars = []
-movieVotes = []
-movieGross = []
-movieCountry = []
+# ================== CONFIGURATIONS ==================
 
-class IMDB(object):
+current_time = datetime.now().strftime('%Y%m%d_%H%M%S')
+OUTPUT_PATH = os.path.join(os.path.expanduser("~"), "IMDB", "data", f"output_{current_time}.xlsx")
+MIN_VOTES = 0
 
-    def __init__(self, url):
-        super(IMDB, self).__init__()
-        page = get(url)
+# ================== SCRAPING CLASS ==================
 
-        self.soup = BeautifulSoup(page.content, 'lxml')
+class IMDBScraper:
+    """Class to scrape IMDB movie data based on country."""
 
-    def articleTitle(self):
-        return self.soup.find("h1", class_="header").text.replace("\n", "")
+    BASE_URL = "https://www.imdb.com/search/title/?title_type=feature,tv_series&num_votes={votes},&country_of_origin={country_code}&sort=user_rating,desc&start=0&ref_=adv_nxt"
 
-    def articleCount(self):
-        txt = self.soup.find(class_="desc").text.replace("\n", "")
-        maxCount = 0
+    def __init__(self, country_code: str, min_votes: int):
+        """
+        Initialize scraper with a specific country and minimum votes.
+        """
+        self.url = self.BASE_URL.format(country_code=country_code, votes=min_votes)
+        self.soup = BeautifulSoup(get(self.url).content, 'lxml')
+        self.movie_data = {
+            'title': [], 'date': [], 'runtime': [], 'genre': [],
+            'rating': [], 'score': [], 'description': [],
+            'director': [], 'stars': [], 'votes': [],
+            'gross': [], 'country': []
+        }
 
-        counter = re.search('(.*)of', txt)
+    def get_article_title(self) -> str:
+        return self.soup.find("h1", class_="header").text.strip()
 
-        if counter is not None:
-            counter = counter.group(1)
-            counter = re.search('-(.*)', counter)
-            counter = counter.group(1)
+    def get_article_count(self) -> Tuple[str, int]:
+        txt = self.soup.find(class_="desc").text.strip()
+        counter = re.search(r'-(\d+)', txt)
+        if counter:
+            return counter.group(1), int(counter.group(1).replace(',', ''))
+        return '', 0
 
-            # Get String after substring occurrence
-            maxCount = txt.partition(counter)[2]
-            maxCount = maxCount.partition('titles')[0]
-            maxCount = maxCount.split()[1]
-            maxCount = int(maxCount.replace(',', ''))
+    def get_body_content(self) -> BeautifulSoup:
+        """
+        Extract the main content body that contains the movie listings.
+        """
+        return self.soup.find(id="main").find_all("div", class_="lister-item mode-advanced")
 
-        return counter, maxCount
+    def extract_movie_data_from_content(self, content: BeautifulSoup):
+        """
+        Extract movie details like title, runtime, genre, etc.
+        and populate the movie_data structure.
+        """
 
-    def bodyContent(self):
-        content = self.soup.find(id="main")
-        return content.find_all("div", class_="lister-item mode-advanced")
+        for movie in content:
+            country = re.search(r'&country_of_origin=(.*?)&sort=user_rating', self.url)
+            self.movie_data['country'].append(country.group(1) if country else np.nan)
 
-    def movieData(self, url):
-        movieFrame = self.bodyContent()
+            movie_first_line = movie.find("h3", class_="lister-item-header")
+            self.movie_data['title'].append(movie_first_line.find("a").text)
+            self.movie_data['date'].append(re.sub(r"[()]", "", movie_first_line.find_all("span")[-1].text))
+            self.movie_data['runtime'].append(
+                movie.find("span", class_="runtime").text[:-4] if movie.find("span", class_="runtime") else np.nan)
+            self.movie_data['genre'].append(
+                movie.find("span", class_="genre").text.rstrip().replace("\n", "").split(",") if movie.find("span",
+                                                                                                            class_="genre") else np.nan)
+            self.movie_data['rating'].append(movie.find("strong").text if movie.find("strong") else np.nan)
+            self.movie_data['score'].append(
+                movie.find("span", class_="metascore unfavorable").text.rstrip() if movie.find("span",
+                                                                                               class_="metascore unfavorable") else np.nan)
+            self.movie_data['description'].append(movie.find_all("p", class_="text-muted")[-1].text.lstrip())
 
-        for movie in movieFrame:
-
-            movieCountry.append(re.search(r'&country_of_origin=(.*?)&sort=user_rating', url).group(1))
-
-            movieFirstLine = movie.find("h3", class_="lister-item-header")
-            movieTitle.append(movieFirstLine.find("a").text)
-            movieDate.append(re.sub(r"[()]", "", movieFirstLine.find_all("span")[-1].text))
-            try:
-                movieRunTime.append(movie.find("span", class_="runtime").text[:-4])
-            except:
-                movieRunTime.append(np.nan)
-
-            try:
-                movieGenre.append(movie.find("span", class_="genre").text.rstrip().replace("\n", "").split(","))
-            except:
-                movieGenre.append(np.nan)
-            try:
-                movieRating.append(movie.find("strong").text)
-            except:
-                movieRating.append(np.nan)
-            try:
-                movieScore.append(movie.find("span", class_="metascore unfavorable").text.rstrip())
-            except:
-                movieScore.append(np.nan)
-            movieDescription.append(movie.find_all("p", class_="text-muted")[-1].text.lstrip())
-            movieCast = movie.find("p", class_="")
+            movie_cast = movie.find("p", class_="")
 
             try:
-                casts = movieCast.text.replace("\n", "").split('|')
+                casts = movie_cast.text.replace("\n", "").split('|')
                 casts = [x.strip() for x in casts]
                 casts = [casts[i].replace(j, "") for i, j in enumerate(["Director:", "Stars:"])]
-                movieDirector.append(casts[0])
-                movieStars.append([x.strip() for x in casts[1].split(",")])
+                self.movie_data['director'].append(casts[0])
+                self.movie_data['stars'].append([x.strip() for x in casts[1].split(",")])
             except:
-                casts = movieCast.text.replace("\n", "").strip()
-                movieDirector.append(np.nan)
-                movieStars.append([x.strip() for x in casts.split(",")])
+                casts = movie_cast.text.replace("\n", "").strip()
+                self.movie_data['director'].append(np.nan)
+                self.movie_data['stars'].append([x.strip() for x in casts.split(",")])
 
-            movieNumbers = movie.find_all("span", attrs={"name": "nv"})
+            movie_numbers = movie.find_all("span", attrs={"name": "nv"})
 
-            if len(movieNumbers) == 2:
-                movieVotes.append(movieNumbers[0].text)
-                movieGross.append(movieNumbers[1].text)
-            elif len(movieNumbers) == 1:
-                movieVotes.append(movieNumbers[0].text)
-                movieGross.append(np.nan)
+            if len(movie_numbers) == 2:
+                self.movie_data['votes'].append(movie_numbers[0].text)
+                self.movie_data['gross'].append(movie_numbers[1].text)
+            elif len(movie_numbers) == 1:
+                self.movie_data['votes'].append(movie_numbers[0].text)
+                self.movie_data['gross'].append(np.nan)
             else:
-                movieVotes.append(np.nan)
-                movieGross.append(np.nan)
+                self.movie_data['votes'].append(np.nan)
+                self.movie_data['gross'].append(np.nan)
 
-        movieData = [movieTitle, movieDate, movieRunTime, movieGenre, movieRating, movieScore, movieDescription,
-                     movieDirector, movieStars, movieVotes, movieGross, movieCountry]
-        return movieData
+    def scrape_movie_data(self) -> pd.DataFrame:
+        movie_content = self.get_body_content()
+        self.extract_movie_data_from_content(movie_content)
+        df = pd.DataFrame(self.movie_data)
+        return df
 
+# ================== MAIN FUNCTION ==================
 
-def IMDB_scrape(country_code, votes):
-    print("---------------")
-    maxTotal = 0
-    maxPerPage = 50
+def main():
+    """
+    Main function to iterate through countries, scrape data and save to an Excel.
+    """
+    for country_info in countries:
+        print(f"Processing {country_info[0]} ({country_info[1]})")
 
-    url = 'https://www.imdb.com/search/title/?title_type=feature,tv_series&num_votes=' + str(
-        votes) + ',&country_of_origin=' + country_code + '&sort=user_rating,desc&start=0&ref_=adv_nxt'
-    site = IMDB(url)
-    subject = site.articleCount()
-    print("Subject: ", subject)
-    count = site.articleCount()[0]
-    print("Count: ", count)
-    maxTotal = site.articleCount()[1]
-    print("Max: ", max)
-    data = site.movieData(url)
-    print(data)
-    print(type(data))
+        scraper = IMDBScraper(country_info[1], MIN_VOTES)
+        df = scraper.scrape_movie_data()
 
-    if maxTotal > maxPerPage:
+        df.to_excel(OUTPUT_PATH, index=False)
+        print(f"Saved data for {country_info[0]} to {OUTPUT_PATH}")
 
-        index = 0
-        while index < maxPerPage:
-            url = 'https://www.imdb.com/search/title/?title_type=feature,tv_series&num_votes=' + str(
-                votes) + ',&country_of_origin=' + country_code + '&sort=user_rating,desc&start=' + str(
-                index) + '&ref_=adv_nxt'
-            site = IMDB(url)
-            data = site.movieData(url)
-            index += int(maxPerPage)
-
-    return data
+if __name__ == "__main__":
+    main()
